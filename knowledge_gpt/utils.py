@@ -9,6 +9,7 @@ from langchain.vectorstores import FAISS, VectorStore
 import docx2txt
 from typing import List, Dict, Any
 import re
+import time
 from io import BytesIO
 import streamlit as st
 from prompts import STUFF_PROMPT
@@ -25,7 +26,7 @@ def parse_docx(file: BytesIO) -> str:
 
 
 @st.experimental_memo()
-def parse_pdf(file: BytesIO) -> List[str]:
+def parse_pdf(file) -> List[str]:
     pdf = PdfReader(file)
     output = []
     for page in pdf.pages:
@@ -51,7 +52,7 @@ def parse_txt(file: BytesIO) -> str:
 
 
 @st.cache(allow_output_mutation=True)
-def text_to_docs(text: str | List[str]) -> List[Document]:
+def text_to_docs(text) -> List[Document]:
     """Converts a string or list of strings to a list of Documents
     with metadata."""
     if isinstance(text, str):
@@ -68,7 +69,7 @@ def text_to_docs(text: str | List[str]) -> List[Document]:
 
     for doc in page_docs:
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=800,
+            chunk_size=2000,
             separators=["\n\n", "\n", ".", "!", "?", ",", " ", ""],
             chunk_overlap=0,
         )
@@ -83,8 +84,23 @@ def text_to_docs(text: str | List[str]) -> List[Document]:
     return doc_chunks
 
 
-@st.cache(allow_output_mutation=True)
-def embed_docs(docs: List[Document]) -> VectorStore:
+# @st.cache(allow_output_mutation=True)
+# def embed_docs(docs: List[Document]) -> VectorStore:
+#     """Embeds a list of Documents and returns a FAISS index"""
+#     print(len(docs))
+#     if not st.session_state.get("OPENAI_API_KEY"):
+#         raise AuthenticationError(
+#             "Enter your OpenAI API key in the sidebar. You can get a key at https://platform.openai.com/account/api-keys."
+#         )
+#     else:
+#         # Embed the chunks
+#         embeddings = OpenAIEmbeddings(openai_api_key=st.session_state.get("OPENAI_API_KEY"))  # type: ignore
+#         index = FAISS.from_documents(docs, embeddings)
+#
+#         return index
+
+@st.cache(allow_output_mutation=True, show_spinner=False)
+def embed_docs(docs: List[Document], rpm=20) -> VectorStore:
     """Embeds a list of Documents and returns a FAISS index"""
 
     if not st.session_state.get("OPENAI_API_KEY"):
@@ -92,12 +108,18 @@ def embed_docs(docs: List[Document]) -> VectorStore:
             "Enter your OpenAI API key in the sidebar. You can get a key at https://platform.openai.com/account/api-keys."
         )
     else:
-        # Embed the chunks
-        embeddings = OpenAIEmbeddings(openai_api_key=st.session_state.get("OPENAI_API_KEY"))  # type: ignore
-        index = FAISS.from_documents(docs, embeddings)
+        embeddings = OpenAIEmbeddings(openai_api_key=st.session_state.get("OPENAI_API_KEY"))
+        texts = [doc.page_content for doc in docs]
+        metadatas = [doc.metadata for doc in docs]
 
+        # https://platform.openai.com/docs/guides/rate-limits/overview  免费用户的限制是20 RPM /150,000 TPM
+        index = FAISS.from_texts(texts[:rpm], embeddings, metadatas=metadatas[:rpm])
+        if len(docs) > rpm:
+            for i in range(rpm, len(docs), rpm):
+                print(f'sleep for 60s')
+                time.sleep(60)
+                index.add_texts(texts=texts[i: i + rpm],  metadatas=metadatas[i: i + rpm])
         return index
-
 
 @st.cache(allow_output_mutation=True)
 def search_docs(index: VectorStore, query: str) -> List[Document]:
@@ -140,7 +162,7 @@ def get_sources(answer: Dict[str, Any], docs: List[Document]) -> List[Document]:
     return source_docs
 
 
-def wrap_text_in_html(text: str | List[str]) -> str:
+def wrap_text_in_html(text) -> str:
     """Wraps each text block separated by newlines in <p> tags"""
     if isinstance(text, list):
         # Add horizontal rules between pages

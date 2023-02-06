@@ -1,3 +1,5 @@
+import time
+import math
 import streamlit as st
 from utils import (
     parse_docx,
@@ -76,7 +78,12 @@ if uploaded_file is not None:
         raise ValueError("File type not supported!")
     text = text_to_docs(doc)
     try:
-        index = embed_docs(text)
+        rpm = 20
+        minutes = math.ceil(len(text)/rpm)
+        with st.spinner(f'Estimated {minutes} minutes wait to process the file'):
+            index = embed_docs(text, rpm)
+        st.success('Done!')
+
         st.session_state["api_key_configured"] = True
     except OpenAIError as e:
         st.error(e._message)
